@@ -44,3 +44,9 @@ nbproject/*
 
 # Last used USER_MOTION_SIZE variable
 .user-motion-size
+
+# Ephemeris Files
+brdc*
+
+# Data folder
+data

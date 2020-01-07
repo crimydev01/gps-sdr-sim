@@ -128,6 +128,7 @@ typedef struct
 	double tgd;	/*!< Group delay L2 bias */
 	int svhlth;
 	int codeL2;
+	unsigned long tlm;
 	// Working variables follow
 	double n; 	/*!< Mean motion (Average angular velocity) */
 	double sq1e2;	/*!< sqrt(1-e^2) */

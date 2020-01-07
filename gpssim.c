@@ -531,6 +531,9 @@ void eph2sbf(const ephem_t eph, const ionoutc_t ionoutc, unsigned long sbf[5][N_
 	unsigned long tot,wnt,wnlsf,dn;
 	unsigned long sbf4_page18_svId = 56UL;
 
+	unsigned long tlm;
+
+	tlm = eph.tlm;
 	// FIXED: This has to be the "transmission" week number, not for the ephemeris reference time
 	//wn = (unsigned long)(eph.toe.week%1024);
 	wn = 0UL;
@@ -584,7 +587,7 @@ void eph2sbf(const ephem_t eph, const ionoutc_t ionoutc, unsigned long sbf[5][N_
 	dtlsf = 18;
 
 	// Subframe 1
-	sbf[0][0] = 0x8B0000UL<<6;
+	sbf[0][0] = 0x8B0000UL<<6 | tlm<<8;
 	sbf[0][1] = 0x1UL<<8;
 	sbf[0][2] = ((wn&0x3FFUL)<<20) | ((codeL2&0x3UL)<<18) | ((ura&0xFUL)<<14) | ((svhlth&0x3FUL)<<8) | (((iodc>>8)&0x3UL)<<6);
 	sbf[0][3] = 0UL;
@@ -596,7 +599,7 @@ void eph2sbf(const ephem_t eph, const ionoutc_t ionoutc, unsigned long sbf[5][N_
 	sbf[0][9] = (af0&0x3FFFFFUL)<<8;
 
 	// Subframe 2
-	sbf[1][0] = 0x8B0000UL<<6;
+	sbf[1][0] = 0x8B0000UL<<6 | tlm<<8;
 	sbf[1][1] = 0x2UL<<8;
 	sbf[1][2] = ((iode&0xFFUL)<<22) | ((crs&0xFFFFUL)<<6);
 	sbf[1][3] = ((deltan&0xFFFFUL)<<14) | (((m0>>24)&0xFFUL)<<6);
@@ -608,7 +611,7 @@ void eph2sbf(const ephem_t eph, const ionoutc_t ionoutc, unsigned long sbf[5][N_
 	sbf[1][9] = (toe&0xFFFFUL)<<14;
 
 	// Subframe 3
-	sbf[2][0] = 0x8B0000UL<<6;
+	sbf[2][0] = 0x8B0000UL<<6 | tlm<<8;
 	sbf[2][1] = 0x3UL<<8;
 	sbf[2][2] = ((cic&0xFFFFUL)<<14) | (((omg0>>24)&0xFFUL)<<6);
 	sbf[2][3] = (omg0&0xFFFFFFUL)<<6;
@@ -622,7 +625,7 @@ void eph2sbf(const ephem_t eph, const ionoutc_t ionoutc, unsigned long sbf[5][N_
 	if (ionoutc.vflg==TRUE)
 	{
 		// Subframe 4, page 18
-		sbf[3][0] = 0x8B0000UL<<6;
+		sbf[3][0] = 0x8B0000UL<<6 | tlm<<8;
 		sbf[3][1] = 0x4UL<<8;
 		sbf[3][2] = (dataId<<28) | (sbf4_page18_svId<<22) | ((alpha0&0xFFUL)<<14) | ((alpha1&0xFFUL)<<6);
 		sbf[3][3] = ((alpha2&0xFFUL)<<22) | ((alpha3&0xFFUL)<<14) | ((beta0&0xFFUL)<<6);
@@ -637,7 +640,7 @@ void eph2sbf(const ephem_t eph, const ionoutc_t ionoutc, unsigned long sbf[5][N_
 	else
 	{
 		// Subframe 4, page 25
-		sbf[3][0] = 0x8B0000UL<<6;
+		sbf[3][0] = 0x8B0000UL<<6 | tlm<<8;
 		sbf[3][1] = 0x4UL<<8;
 		sbf[3][2] = (dataId<<28) | (sbf4_page25_svId<<22);
 		sbf[3][3] = 0UL;
@@ -650,7 +653,7 @@ void eph2sbf(const ephem_t eph, const ionoutc_t ionoutc, unsigned long sbf[5][N_
 	}
 
 	// Subframe 5, page 25
-	sbf[4][0] = 0x8B0000UL<<6;
+	sbf[4][0] = 0x8B0000UL<<6 | tlm<<8;
 	sbf[4][1] = 0x5UL<<8;
 	sbf[4][2] = (dataId<<28) | (sbf5_page25_svId<<22) | ((toa&0xFFUL)<<14) | ((wna&0xFFUL)<<6);
 	sbf[4][3] = 0UL;
@@ -815,7 +818,7 @@ gpstime_t incGpsTime(gpstime_t g0, double dt)
  *  \param[in] fname File name of the RINEX file
  *  \returns Number of sets of ephemerides in the file
  */
-int readRinexNavAll(ephem_t eph[][MAX_SAT], ionoutc_t *ionoutc, const char *fname)
+int readRinexNavAll(ephem_t eph[][MAX_SAT], unsigned long tlm, ionoutc_t *ionoutc, const char *fname)
 {
 	FILE *fp;
 	int ieph;
@@ -1148,6 +1151,9 @@ int readRinexNavAll(ephem_t eph[][MAX_SAT], ionoutc_t *ionoutc, const char *fnam
 		// BROADCAST ORBIT - 7
 		if (NULL==fgets(str, MAX_CHAR, fp))
 			break;
+
+		// TLM Message
+		eph[ieph][sv].tlm = tlm;
 
 		// Set valid flag
 		eph[ieph][sv].vflg = 1;
@@ -1659,8 +1665,11 @@ void usage(void)
 		"  -t <date,time>   Scenario start time YYYY/MM/DD,hh:mm:ss\n"
 		"  -T <date,time>   Overwrite TOC and TOE to scenario start time\n"
 		"  -d <duration>    Duration [sec] (dynamic mode max: %.0f, static mode max: %d)\n"
+		"  -B <blockage>    Duration of blockage after the first minute [sec]\n"
+		"  -O <offset>      time offset for rebroadcast after blockage [sec] (resolution: 0.1 sec)\n"
+		"  -M <message>     User telemetry message\n"
 		"  -o <output>      I/Q sampling data file (default: gpssim.bin)\n"
-		"  -s <frequency>   Sampling frequency [Hz] (default: 2600000)\n"
+		"  -s <frequency>   Sampling frequency [Hz] (default: 2500000)\n"
 		"  -b <iq_bits>     I/Q data format [1/8/16] (default: 16)\n"
 		"  -i               Disable ionospheric delay for spacecraft scenario\n"
 		"  -v               Show details about simulated channels\n",
@@ -1726,6 +1735,16 @@ int main(int argc, char *argv[])
 	double duration;
 	int iduration;
 	int verb;
+	unsigned long tlm = 0UL;
+	gpstime_t g_blk_start, g_blk_end;
+	gpstime_t g_blk_offset_start;
+	double blk_duration;
+	double offset;
+	int i_offset;
+
+	g_blk_start.week = -1;
+	g_blk_end.week = -1;
+	g_blk_offset_start.week = -1;
 
 	int timeoverwrite = FALSE; // Overwirte the TOC and TOE in the RINEX file
 
@@ -1739,7 +1758,7 @@ int main(int argc, char *argv[])
 	navfile[0] = 0;
 	umfile[0] = 0;
 	strcpy(outfile, "gpssim.bin");
-	samp_freq = 2.6e6;
+	samp_freq = 2.5e6;
 	data_format = SC16;
 	g0.week = -1; // Invalid start time
 	iduration = USER_MOTION_SIZE;
@@ -1842,6 +1861,36 @@ int main(int argc, char *argv[])
 		case 'v':
 			verb = TRUE;
 			break;
+		case 'M':
+			tlm = strtoul(optarg, NULL, 2);
+			break;
+		case 'B':
+			sscanf(optarg, "%lf", &blk_duration);
+
+			g_blk_start = g0;
+			/** g_blk_start.sec += 60; */
+			g_blk_start.sec += 30;
+			if (g_blk_start.sec > SECONDS_IN_WEEK)
+			{
+			  g_blk_start.week += 1;
+			  g_blk_start.sec -= SECONDS_IN_WEEK;
+			}
+
+			g_blk_end = g_blk_start;
+			g_blk_end.sec += floor(blk_duration);
+			if (g_blk_end.sec > SECONDS_IN_WEEK)
+			{
+			  g_blk_end.week += 1;
+			  g_blk_end.sec -= SECONDS_IN_WEEK;
+			}
+			break;
+		case 'O':
+			sscanf(optarg, "%lf", &offset);
+			offset = floor(offset * 10) / 10;
+			printf("OFFSET : %lf sec.\n", offset);
+			g_blk_offset_start = g_blk_end;
+			i_offset = (int) (offset * 10);
+			break;
 		case ':':
 		case '?':
 			usage();
@@ -1849,6 +1898,18 @@ int main(int argc, char *argv[])
 		default:
 			break;
 		}
+	}
+
+	if (i_offset != 0 && g_blk_start.week < 0)
+	{
+		fprintf(stderr, "ERROR: Blockage duration is not set.\n");
+		exit(1);
+	}
+
+	if (i_offset > floor(blk_duration) * 5)
+	{
+		fprintf(stderr, "ERROR: Invalid offset range. (offset < blockage duration / 2)\n");
+		exit(1);
 	}
 
 	if (navfile[0]==0)
@@ -1923,12 +1984,16 @@ int main(int argc, char *argv[])
 	// Read ephemeris
 	////////////////////////////////////////////////////////////
 
-	neph = readRinexNavAll(eph, &ionoutc, navfile);
+	neph = readRinexNavAll(eph, tlm, &ionoutc, navfile);
 
 	if (neph==0)
 	{
 		fprintf(stderr, "ERROR: No ephemeris available.\n");
 		exit(1);
+	}
+	else
+	{
+		printf("num. of eph. = %d\n", neph);
 	}
 
 	if ((verb==TRUE)&&(ionoutc.vflg==TRUE))
@@ -1969,6 +2034,14 @@ int main(int argc, char *argv[])
 			break;
 		}
 	}
+
+	if (g_blk_start.week > 0)
+	  printf("Blockage duration has been set.\n");
+	  printf("START_TIME: %lf\nBLK_START: %lf\nBLK_END: %lf\n", g0.sec, g_blk_start.sec, g_blk_end.sec);
+	if (g_blk_offset_start.week > 0)
+	  printf("Offset has been set.\n");
+	if (i_offset != 0)
+	  printf("Offset has been set. i_offset: %d\n", i_offset);
 
 	if (g0.week>=0) // Scenario start time has been set.
 	{
@@ -2146,6 +2219,7 @@ int main(int argc, char *argv[])
 	// Update receiver time
 	grx = incGpsTime(grx, 0.1);
 
+	int count_offset = 0;
 	for (iumd=1; iumd<numd; iumd++)
 	{
 		for (i=0; i<MAX_CHAN; i++)
@@ -2179,6 +2253,11 @@ int main(int argc, char *argv[])
 
 				// Signal gain
 				gain[i] = (int)(path_loss*ant_gain*128.0); // scaled by 2^7
+				if (g_blk_start.week > 0 && grx.sec > g_blk_start.sec && grx.sec < g_blk_end.sec)
+				{
+				  gain[i] = (int)0;
+				}
+
 			}
 		}
 
@@ -2202,6 +2281,10 @@ int main(int argc, char *argv[])
 					// Accumulate for all visible satellites
 					i_acc += ip;
 					q_acc += qp;
+
+					if (gain[i] == 0 && (i_acc != 0 || q_acc != 0))
+					  printf("HEY! SOMETHINGS WRONG!\n");
+
 
 					// Update code phase
 					chan[i].code_phase += chan[i].f_code * delt;
@@ -2339,8 +2422,24 @@ int main(int argc, char *argv[])
 			}
 		}
 
-		// Update receiver time
-		grx = incGpsTime(grx, 0.1);
+		if (i_offset > 0 && subGpsTime(grx, g_blk_start) > (blk_duration / 2) && count_offset < i_offset)
+		{
+			count_offset++;
+		}
+		else if (i_offset < 0 && subGpsTime(grx, g_blk_start) > (blk_duration / 2) && count_offset == 0)
+		{
+			/** grx = incGpsTime(grx, (i_offset / -10) ); */
+			/** grx = incGpsTime(grx, (-1 * offset) ); */
+			/** printf("OFFSET : %lf", (double) -1 * i_offset / 10); */
+			grx = incGpsTime(grx, (double) -1 * i_offset / 10 );
+			grx = incGpsTime(grx, 0.1);
+			count_offset++;
+		}
+		else
+		{
+			// Update receiver time
+			grx = incGpsTime(grx, 0.1);
+		}
 
 		// Update time counter
 		fprintf(stderr, "\rTime into run = %4.1f", subGpsTime(grx, g0));
