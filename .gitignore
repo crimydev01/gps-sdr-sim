@@ -29,6 +29,7 @@
 *.hex
 gps-sdr-sim
 gps-sdr-sim-lut
+gps-sdr-sim-crimy
 
 # Debug files
 *.dSYM/
