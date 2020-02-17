@@ -30,6 +30,7 @@
 gps-sdr-sim
 gps-sdr-sim-lut
 gps-sdr-sim-crimy
+gps-sdr-sim-test*
 
 # Debug files
 *.dSYM/

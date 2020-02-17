@@ -1470,7 +1470,41 @@ int readNmeaGGA(double xyz[USER_MOTION_SIZE][3], const char *filename)
 	return (numd);
 }
 
-int generateNavMsg(gpstime_t g, channel_t *chan, int init)
+subframe_t findMatchingSbf(unsigned long tow, unsigned long prn, sbflogs_t sbflogs)
+{
+	subframe_t result;
+	result.prn = 0;
+	result.tow = 0;
+
+	if (sbflogs.length < 1)
+	{
+		return result;
+	}
+	
+	for (int i=0; i<sbflogs.length; ++i)
+	{
+		if (sbflogs.data[i].tow != tow) continue;
+		if (sbflogs.data[i].prn != prn) continue;
+
+		result.tow = sbflogs.data[i].tow;
+		result.prn = sbflogs.data[i].prn;
+		memcpy(result.words, sbflogs.data[i].words, N_DWRD_SBF * sizeof(unsigned long));
+
+	}
+
+	return result;
+}
+
+int setSubframeData(const subframe_t sbf_data, unsigned long sbf[5][N_DWRD_SBF])
+{
+	unsigned long sbf_id;
+	sbf_id = (sbf_data.words[1] >> 8) & 7UL;
+	printf("SUBFRAME ID : %lu\n",sbf_id);
+	memcpy(sbf[sbf_id-1], sbf_data.words, N_DWRD_SBF * sizeof(unsigned long));
+	return sbf_id;
+}
+
+int generateNavMsg(gpstime_t g, channel_t *chan, int init, sbflogs_t sbflogs)
 {
 	int iwrd,isbf;
 	gpstime_t g0;
@@ -1486,25 +1520,71 @@ int generateNavMsg(gpstime_t g, channel_t *chan, int init)
 	wn = (unsigned long)(g0.week%1024);
 	tow = ((unsigned long)g0.sec)/6UL;
 
+	/** int useRecordedSBF = FALSE; */
+	subframe_t sbf_data;
+	unsigned long sbf_id;
+	/** if (sbflogs.tow_start <= (g0.sec + 30) and sbflogs.tow_end >= (g0.sec + 6)) */
+	/** { */
+	/**         useRecordedSBF = TRUE; */
+	/**         fprintf(stdout, "TOW in range\n"); */
+	/**         sbf_data = findMatchingSbf(g0.sec, (unsigned long) chan->prn, sbflogs); */
+	/** } */
+        /**  */
+	/** if (useRecordedSBF) */
+	/** { */
+	/**         for (isbf=0; isbf<N_SBF; isbf++) */
+	/**         { */
+	/**                 tow++; */
+	/**                 for (iwrd=0; iwrd<N_DWRD_SBF; iwrd++) */
+	/**                 { */
+	/**                         sbfwrd = chan->sbf[isbf][iwrd]; */
+	/**                         chan->dwrd[(isbf+1)*N_DWRD_SBF+iwrd] = computeChecksum(sbfwrd, nib); */
+	/**                         prevwrd = chan->dwrd[(isbf+1)*N_DWRD_SBF+iwrd]; */
+	/**                 } */
+	/**         } */
+        /**  */
+	/**         return(1); */
+	/** } */
+
+	sbf_data.prn = 0;
+	sbf_data.tow = 0;
+
 	if (init==1) // Initialize subframe 5
 	{
 		prevwrd = 0UL;
-
-		for (iwrd=0; iwrd<N_DWRD_SBF; iwrd++)
-		{
-			sbfwrd = chan->sbf[4][iwrd];
-
-			// Add TOW-count message into HOW
-			if (iwrd==1)
-				sbfwrd |= ((tow&0x1FFFFUL)<<13);
-
-			// Compute checksum
-			sbfwrd |= (prevwrd<<30) & 0xC0000000UL; // 2 LSBs of the previous transmitted word
-			nib = ((iwrd==1)||(iwrd==9))?1:0; // Non-information bearing bits for word 2 and 10
-			chan->dwrd[iwrd] = computeChecksum(sbfwrd, nib);
-
-			prevwrd = chan->dwrd[iwrd];
+		printf("INITIALIZING CHANNEL\n");	
+		printf("TOW: %lu\n",tow*6UL);
+		printf("SBFLOGS TOW START %lu, END %lu\n", sbflogs.tow_start, sbflogs.tow_end);
+		if (sbflogs.tow_start <= tow * 6UL && sbflogs.tow_end >= tow * 6) {
+			sbf_data = findMatchingSbf(tow*6UL, (unsigned long) chan->prn, sbflogs);
 		}
+
+		if (sbf_data.tow > 0) {
+			sbf_id = (sbf_data.words[1] >> 8) & 7UL;
+			printf("SUBFRAME ID : %lu\n",sbf_id);
+			memcpy(chan->dwrd, sbf_data.words, N_DWRD_SBF * sizeof(unsigned long));
+			prevwrd = chan->dwrd[N_DWRD_SBF-1];
+		}
+		else {
+			for (iwrd=0; iwrd<N_DWRD_SBF; iwrd++)
+			{
+				sbfwrd = chan->sbf[4][iwrd];
+				printf("INIT SBF 5 SBFWRD: 0x%lx\n",chan->sbf[4][iwrd]);
+
+				// Add TOW-count message into HOW
+				if (iwrd==1)
+					sbfwrd |= ((tow&0x1FFFFUL)<<13);
+
+				// Compute checksum
+				sbfwrd |= (prevwrd<<30) & 0xC0000000UL; // 2 LSBs of the previous transmitted word
+				nib = ((iwrd==1)||(iwrd==9))?1:0; // Non-information bearing bits for word 2 and 10
+				chan->dwrd[iwrd] = computeChecksum(sbfwrd, nib);
+				printf("after computeCheckSum: 0x%lx\n",chan->dwrd[iwrd]);
+
+				prevwrd = chan->dwrd[iwrd];
+			}
+		}
+
 	}
 	else // Save subframe 5
 	{
@@ -1524,13 +1604,31 @@ int generateNavMsg(gpstime_t g, channel_t *chan, int init)
 		*/
 	}
 
+	sbf_data.prn = 0;
+	sbf_data.tow = 0;
+
 	for (isbf=0; isbf<N_SBF; isbf++)
 	{
 		tow++;
 
+		printf("UPDATING SUBFRAME %d\n", isbf+1);
+		printf("TOW: %lu\n",tow*6UL);
+		if (sbflogs.tow_start <= tow * 6UL && sbflogs.tow_end >= tow * 6) {
+			sbf_data = findMatchingSbf(tow*6UL, (unsigned long) chan->prn, sbflogs);
+		}
+
+		if (sbf_data.tow > 0){
+			sbf_id = (sbf_data.words[1] >> 8) & 7UL;
+			printf("SUBFRAME ID : %lu\n",sbf_id);
+			/** memcpy(&chan->dwrd[(isbf+1)*N_DWRD_SBF], sbf_data.words, N_DWRD_SBF * sizeof(unsigned long)); */
+			/** prevwrd = chan->dwrd[(isbf+2)*N_DWRD_SBF-1]; */
+			/** continue; */
+		}
+
 		for (iwrd=0; iwrd<N_DWRD_SBF; iwrd++)
 		{
 			sbfwrd = chan->sbf[isbf][iwrd];
+			printf("SBFWRD: 0x%lx\n",chan->sbf[isbf][iwrd]);
 
 			// Add transmission week number to Subframe 1
 			if ((isbf==0)&&(iwrd==2))
@@ -1544,6 +1642,7 @@ int generateNavMsg(gpstime_t g, channel_t *chan, int init)
 			sbfwrd |= (prevwrd<<30) & 0xC0000000UL; // 2 LSBs of the previous transmitted word
 			nib = ((iwrd==1)||(iwrd==9))?1:0; // Non-information bearing bits for word 2 and 10
 			chan->dwrd[(isbf+1)*N_DWRD_SBF+iwrd] = computeChecksum(sbfwrd, nib);
+			printf("after computeCheckSum: 0x%lx\n",chan->dwrd[iwrd]);
 
 			prevwrd = chan->dwrd[(isbf+1)*N_DWRD_SBF+iwrd];
 		}
@@ -1575,7 +1674,48 @@ int checkSatVisibility(ephem_t eph, gpstime_t g, double *xyz, double elvMask, do
 	return (0); // Invisible
 }
 
-int allocateChannel(channel_t *chan, ephem_t *eph, ionoutc_t ionoutc, gpstime_t grx, double *xyz, double elvMask)
+int readSubframeCSV(subframe_t *subframes, const char *sbffile)
+{
+	FILE *fp;
+	char buf[100];
+	char *ptr;
+	char dword[10];
+
+	fp = fopen(sbffile, "r");
+	if (fp == NULL) return -1;
+
+	int nSubframes = 0;
+	while (fgets(buf,sizeof(buf),fp) != NULL) nSubframes++;
+
+	nSubframes--;  // The first line is not a valid data
+	
+	if (nSubframes < 1) return 0;
+	if (nSubframes > MAX_NUM_SBF) nSubframes = MAX_NUM_SBF;
+
+	rewind(fp);
+	fgets(buf,sizeof(buf),fp);  // Omit the first line
+
+	for (int i=0; i < nSubframes; ++i)
+	{
+		fgets(buf,sizeof(buf),fp);
+
+		ptr = strtok(buf,",");
+		subframes[i].tow = strtoul(ptr, NULL, 10);
+		ptr = strtok(NULL,",");
+		subframes[i].prn = strtoul(ptr, NULL, 10);
+		ptr = strtok(NULL,",");
+
+		for(int j=0; j < 10; ++j)
+		{
+			strncpy(dword,ptr+j*8,8);
+			subframes[i].words[j] = strtoul(dword, NULL, 16) & 0x3FFFFFFFUL;
+		};
+	}
+
+	return nSubframes;
+}
+
+int allocateChannel(channel_t *chan, ephem_t *eph, ionoutc_t ionoutc, gpstime_t grx, double *xyz, double elvMask, sbflogs_t sbflogs)
 {
 	int nsat=0;
 	int i,sv;
@@ -1586,9 +1726,13 @@ int allocateChannel(channel_t *chan, ephem_t *eph, ionoutc_t ionoutc, gpstime_t 
 	double r_ref,r_xyz;
 	double phase_ini;
 
+	unsigned long tow;
+	subframe_t sbf_data;
+
 	for (sv=0; sv<MAX_SAT; sv++)
 	{
-		if(checkSatVisibility(eph[sv], grx, xyz, 0.0, azel)==1)
+		/** if(checkSatVisibility(eph[sv], grx, xyz, 0.0, azel)==1) */
+		if(checkSatVisibility(eph[sv], grx, xyz, elvMask, azel)==1)
 		{
 			nsat++; // Number of visible satellites
 
@@ -1610,8 +1754,33 @@ int allocateChannel(channel_t *chan, ephem_t *eph, ionoutc_t ionoutc, gpstime_t 
 						// Generate subframe
 						eph2sbf(eph[sv], ionoutc, chan[i].sbf);
 
+						tow = (((unsigned long)((grx.sec+6)/6)))*6UL;
+						fprintf(stdout,"allocateChannel, PRN, TOW : %d, %lu\n",chan[i].prn, tow);
+						if (sbflogs.tow_start <= (tow + 24) || sbflogs.tow_end >= tow) {
+							for (unsigned long t = tow; t < (tow + 30); t += 6) {
+								sbf_data = findMatchingSbf(t, chan[i].prn, sbflogs);
+								if (sbf_data.tow > 0) {
+									fprintf(stdout,"Found matching data for %lu, %lu\n", sbf_data.prn, t);
+									setSubframeData(sbf_data, chan[i].sbf);
+									for (int k=0; k<N_DWRD_SBF; k++) {
+										fprintf(stdout,"WORD %d : %lx\n", k+1, sbf_data.words[k]);
+									}
+								}
+
+							}
+						}
+						/** if (sbf_data.tow > 0) { */
+						/**         setSubframeData(sbf_data, chan[i].sbf); */
+						/**         fprintf(stdout,"Found matching data for %lu\n", sbf_data.prn); */
+						/**         for (int k=0; k<N_DWRD_SBF; k++) { */
+						/**                 fprintf(stdout,"WORD %d : %lx\n", k+1, sbf_data.words[k]); */
+						/**         } */
+						/** [> } else { <] */
+						/** [>         eph2sbf(eph[sv], ionoutc, chan[i].sbf); <] */
+						/** } */
+
 						// Generate navigation message
-						generateNavMsg(grx, &chan[i], 1);
+						generateNavMsg(grx, &chan[i], 1, sbflogs);
 
 						// Initialize pseudorange
 						computeRange(&rho, eph[sv], &ionoutc, grx, xyz);
@@ -1694,6 +1863,7 @@ int main(int argc, char *argv[])
 	int i;
 	channel_t chan[MAX_CHAN];
 	double elvmask = 0.0; // in degree
+	/** double elvmask = 5.0; // in degree */
 
 	int ip,qp;
 	int iTable;
@@ -1750,6 +1920,18 @@ int main(int argc, char *argv[])
 
 	ionoutc_t ionoutc;
 
+	char sbffile[MAX_CHAR];
+	sbffile[0] = 0;
+	subframe_t subframes[MAX_NUM_SBF];
+	subframe_t sbf_data;
+	unsigned long tow;
+	int nSubframes;
+	sbflogs_t sbflogs;
+	sbflogs.tow_start = -1;
+	sbflogs.tow_end = 0;
+	sbflogs.length = -1;
+	sbflogs.data = NULL;
+
 	////////////////////////////////////////////////////////////
 	// Read options
 	////////////////////////////////////////////////////////////
@@ -1757,6 +1939,7 @@ int main(int argc, char *argv[])
 	// Default options
 	navfile[0] = 0;
 	umfile[0] = 0;
+	sbffile[0] = 0;
 	strcpy(outfile, "gpssim.bin");
 	samp_freq = 2.5e6;
 	data_format = SC16;
@@ -1772,7 +1955,7 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 
-	while ((result=getopt(argc,argv,"e:u:g:c:l:o:s:b:T:t:d:M:B:O:i:v"))!=-1)
+	while ((result=getopt(argc,argv,"e:u:g:c:l:o:s:b:T:t:d:M:B:O:S:i:v"))!=-1)
 	{
 		switch (result)
 		{
@@ -1891,6 +2074,9 @@ int main(int argc, char *argv[])
 			g_blk_offset_start = g_blk_end;
 			i_offset = (int) (offset * 10);
 			break;
+		case 'S':
+			strcpy(sbffile, optarg);
+			break;
 		case ':':
 		case '?':
 			usage();
@@ -1933,6 +2119,23 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 	iduration = (int)(duration*10.0 + 0.5);
+
+	if (sbffile[0] != 0)
+	{
+		nSubframes = readSubframeCSV(subframes, sbffile);
+		
+		if (nSubframes < 1)
+		{
+		      fprintf(stderr, "ERROR: Invalid subframe log file.\n");
+		      exit(1);
+		}
+
+		sbflogs.length = nSubframes;
+		sbflogs.tow_start = subframes[0].tow;
+		sbflogs.tow_end = subframes[nSubframes-1].tow;
+		sbflogs.data = subframes;
+		
+	}
 
 	// Buffer size	
 	samp_freq = floor(samp_freq/10.0);
@@ -2194,7 +2397,7 @@ int main(int argc, char *argv[])
 	grx = incGpsTime(g0, 0.0);
 
 	// Allocate visible satellites
-	allocateChannel(chan, eph[ieph], ionoutc, grx, xyz[0], elvmask);
+	allocateChannel(chan, eph[ieph], ionoutc, grx, xyz[0], elvmask, sbflogs);
 
 	for(i=0; i<MAX_CHAN; i++)
 	{
@@ -2377,7 +2580,7 @@ int main(int argc, char *argv[])
 			for (i=0; i<MAX_CHAN; i++)
 			{
 				if (chan[i].prn>0)
-					generateNavMsg(grx, &chan[i], 0);
+					generateNavMsg(grx, &chan[i], 0, sbflogs);
 			}
 
 			// Refresh ephemeris and subframes
@@ -2394,8 +2597,25 @@ int main(int argc, char *argv[])
 						for (i=0; i<MAX_CHAN; i++)
 						{
 							// Generate new subframes if allocated
-							if (chan[i].prn!=0) 
+							if (chan[i].prn!=0) {
 								eph2sbf(eph[ieph][chan[i].prn-1], ionoutc, chan[i].sbf);
+
+								tow = (((unsigned long)((grx.sec+6)/6)))*6UL;
+								fprintf(stdout,"main Update, PRN, TOW : %d, %lu\n",chan[i].prn, tow);
+								if (sbflogs.tow_start < (tow + 24) || sbflogs.tow_end > tow) {
+									for (unsigned long t = tow; t < (tow + 30); t += 6) {
+										sbf_data = findMatchingSbf(t, chan[i].prn, sbflogs);
+										if (sbf_data.tow > 0) {
+											fprintf(stdout,"Found matching data for %lu, %lu\n", sbf_data.prn, t);
+											setSubframeData(sbf_data, chan[i].sbf);
+											for (int k=0; k<N_DWRD_SBF; k++) {
+												fprintf(stdout,"WORD %d : %lx\n", k+1, sbf_data.words[k]);
+											}
+										}
+
+									}
+								}
+							}
 						}
 					}
 						
@@ -2405,9 +2625,9 @@ int main(int argc, char *argv[])
 
 			// Update channel allocation
 			if (!staticLocationMode)
-				allocateChannel(chan, eph[ieph], ionoutc, grx, xyz[iumd], elvmask);
+				allocateChannel(chan, eph[ieph], ionoutc, grx, xyz[iumd], elvmask, sbflogs);
 			else
-				allocateChannel(chan, eph[ieph], ionoutc, grx, xyz[0], elvmask);
+				allocateChannel(chan, eph[ieph], ionoutc, grx, xyz[0], elvmask, sbflogs);
 
 			// Show ditails about simulated channels
 			if (verb==TRUE)

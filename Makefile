@@ -14,6 +14,9 @@ LDFLAGS=-lm
 gps-sdr-sim: gpssim.o
 	${CC} $< ${LDFLAGS} -o $@
 
+test: gpssim.o
+	${CC} $< ${LDFLAGS} -o gps-sdr-sim-test
+
 gpssim.o: .user-motion-size gpssim.h
 
 .user-motion-size: .FORCE

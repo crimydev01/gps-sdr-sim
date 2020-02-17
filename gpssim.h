@@ -98,6 +98,23 @@ typedef struct
 	double sec;	/*!< Calendar seconds */
 } datetime_t;
 
+#define MAX_NUM_SBF (8192)
+
+typedef struct
+{
+	unsigned long tow;
+	unsigned long prn;
+	unsigned long words[N_DWRD_SBF];
+} subframe_t;
+
+typedef struct
+{
+	int length;
+	unsigned long tow_start;
+	unsigned long tow_end;
+	subframe_t *data;
+} sbflogs_t;
+
 /*! \brief Structure representing ephemeris of a single satellite */
 typedef struct
 {
